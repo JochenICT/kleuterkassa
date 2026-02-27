@@ -1,0 +1,42 @@
+// Vervang het stukje Quagga.init door dit voor betere iPad ondersteuning:
+function startScanner() {
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#interactive'),
+            constraints: {
+                // Belangrijk voor iPad: expliciet om de camera achterop vragen
+                facingMode: "environment",
+                width: { min: 640 },
+                height: { min: 480 }
+            },
+            // Zorgt dat de video niet bevriest op iOS
+            async: true
+        },
+        decoder: {
+            readers: ["code_128_reader", "ean_reader", "ean_8_reader"]
+        }
+    }, function(err) {
+        if (err) {
+            console.log(err);
+            // Als dit verschijnt op de iPad, zit je niet op een HTTPS verbinding
+            document.getElementById('status-msg').innerHTML = "⚠️ Camera geblokkeerd door Safari (Gebruik HTTPS)";
+            return;
+        }
+        Quagga.start();
+    });
+}
+
+// Vervang unlockAdmin door dit (sommige iPads blokkeren prompt() in een loop)
+function unlockAdmin() {
+    setTimeout(() => {
+        let pw = prompt("Wachtwoord leerkracht:");
+        if (pw === MASTER_CODE) {
+            document.getElementById('admin-overlay').style.display = 'block';
+            renderAdmin();
+        } else if (pw) {
+            alert("Fout wachtwoord!");
+        }
+    }, 100);
+}
