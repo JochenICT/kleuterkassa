@@ -1,0 +1,17 @@
+{
+  "101": {
+    "name": "Appel",
+    "price": 1.50,
+    "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Red_Apple.jpg/300px-Red_Apple.jpg"
+  },
+  "102": {
+    "name": "Banaan",
+    "price": 0.80,
+    "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Banana-Single.jpg/300px-Banana-Single.jpg"
+  },
+  "103": {
+    "name": "Melk",
+    "price": 2.10,
+    "img": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Milk_glass.jpg/300px-Milk_glass.jpg"
+  }
+}
