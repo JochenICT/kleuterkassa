@@ -3,17 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Centrale Kleuter Kassa - De Klimmuur</title>
+    <title>Klimmuur Kassa V10</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
     <style>
         :root { --primary: #0277bd; --accent: #d81b60; }
         body { font-family: 'Comic Sans MS', sans-serif; background-color: #e0f7fa; margin: 0; padding: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
-        header { background: var(--primary); color: white; padding: 10px; text-align: center; display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; }
+        
+        /* Start Overlay voor Spraak-activatie */
+        #start-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: var(--primary); z-index: 9999; display: flex; align-items: center; justify-content: center; color: white; flex-direction: column; }
+        .btn-start { padding: 30px 60px; font-size: 2.5rem; background: #4caf50; color: white; border: none; border-radius: 20px; cursor: pointer; box-shadow: 0 10px 0 #2e7d32; font-family: inherit; }
+
+        header { background: var(--primary); color: white; padding: 10px; text-align: center; }
         .main-grid { display: grid; grid-template-columns: 1fr 380px; flex-grow: 1; gap: 15px; padding: 15px; box-sizing: border-box; height: calc(100vh - 60px); }
         
         #display { background: white; border-radius: 30px; border: 8px solid #a5d6a7; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; flex-grow: 1; }
-        #img-container { width: 300px; height: 300px; display: flex; align-items: center; justify-content: center; margin: 20px 0; background: #f0f0f0; border-radius: 20px; }
-        #product-img { max-width: 100%; max-height: 100%; border-radius: 15px; }
+        #img-container { width: 300px; height: 300px; display: flex; align-items: center; justify-content: center; margin: 20px 0; background: #eee; border-radius: 20px; }
+        #product-img { max-width: 100%; max-height: 100%; border-radius: 15px; display: none; }
+        
         .name-large { font-size: 3rem; color: var(--primary); font-weight: bold; text-transform: uppercase; }
         .price-large { font-size: 5rem; color: var(--accent); font-weight: bold; background: #fce4ec; padding: 10px 40px; border-radius: 20px; }
 
@@ -24,30 +30,29 @@
         #receipt-items { flex-grow: 1; overflow-y: auto; font-family: monospace; font-size: 1.4rem; }
         .receipt-total { border-top: 4px double #333; font-size: 2.5rem; font-weight: bold; display: flex; justify-content: space-between; padding-top: 10px; }
         .btn-pay { background: #4caf50; color: white; border: none; padding: 20px; border-radius: 20px; font-size: 2rem; font-weight: bold; margin-top: 10px;}
-        
-        .status-sync { font-size: 0.8rem; color: #e0f7fa; }
     </style>
 </head>
 <body>
 
-<header>
-    <h1>🛒 De Klimmuur Kassa</h1>
-    <div class="status-sync" id="sync-status">Laden van producten...</div>
-</header>
+<div id="start-overlay">
+    <h1>Welkom bij de Klimmuur!</h1>
+    <button class="btn-start" onclick="initApp()">START DE KASSA</button>
+</div>
+
+<header><h1>🛒 De Klimmuur Kassa</h1></header>
 
 <div class="main-grid">
     <div style="display: flex; flex-direction: column;">
         <div id="interactive" class="viewport"></div>
         <div id="display">
-            <h2 id="status-msg">Scan een product!</h2>
+            <h2 id="status-msg">Wachten op scan...</h2>
             <div id="prod-info" style="display:none; width: 100%;">
                 <div class="name-large" id="disp-name"></div>
-                <div id="img-container"><img id="product-img" src="" crossorigin="anonymous"></div>
+                <div id="img-container"><img id="product-img" src=""></div>
                 <div class="price-large" id="disp-price"></div>
             </div>
         </div>
     </div>
-
     <div class="receipt-side">
         <h3 style="text-align:center;">TICKET</h3>
         <div id="receipt-items"></div>
@@ -60,16 +65,31 @@
     let inventory = {};
     let total = 0;
 
-    // --- CENTRAAL SYSTEEM: JSON LADEN ---
+    async function initApp() {
+        // Activeer spraak
+        const s = new SpeechSynthesisUtterance("De kassa is klaar voor gebruik.");
+        s.lang = 'nl-BE';
+        window.speechSynthesis.speak(s);
+        
+        // Verberg overlay
+        document.getElementById('start-overlay').style.display = 'none';
+        
+        // Laad producten
+        loadCentralInventory();
+        
+        // Start scanner
+        Quagga.init({
+            inputStream: { name: "Live", type: "LiveStream", target: document.querySelector('#interactive'), constraints: { facingMode: "environment" } },
+            decoder: { readers: ["code_128_reader", "ean_reader"] }
+        }, (err) => { if(!err) Quagga.start(); });
+    }
+
     async function loadCentralInventory() {
         try {
-            // We voegen een uniek nummer toe aan de URL (?v=...) om te voorkomen dat de iPad een oude versie uit de cache laadt
             const response = await fetch('producten.json?v=' + Date.now());
             inventory = await response.json();
-            document.getElementById('sync-status').innerText = "✅ Producten bijgewerkt";
         } catch (error) {
-            console.error("Fout bij laden JSON:", error);
-            document.getElementById('sync-status').innerText = "⚠️ Fout bij laden lijst";
+            console.error("Laden mislukt:", error);
         }
     }
 
@@ -78,27 +98,28 @@
         document.getElementById('total-amount').innerText = "€ 0.00";
         document.getElementById('prod-info').style.display = "none";
         document.getElementById('status-msg').style.display = "block";
-        let s = new SpeechSynthesisUtterance("Dat is betaald. Dank u wel!"); 
-        s.lang = 'nl-BE'; window.speechSynthesis.speak(s);
+        speak("Dank u wel!");
     }
 
-    // Scanner
-    Quagga.init({
-        inputStream: { name: "Live", type: "LiveStream", target: document.querySelector('#interactive'), constraints: { facingMode: "environment" } },
-        decoder: { readers: ["code_128_reader", "ean_reader"] }
-    }, (err) => { if(!err) Quagga.start(); });
+    function speak(text) {
+        let s = new SpeechSynthesisUtterance(text);
+        s.lang = 'nl-BE';
+        window.speechSynthesis.speak(s);
+    }
 
-    let lastS = 0;
     Quagga.onDetected((data) => {
-        if (Date.now() - lastS < 3000) return;
         const item = inventory[data.codeResult.code];
-        if (item) {
-            lastS = Date.now();
+        if (item && (Date.now() - (window.lastS || 0) > 3000)) {
+            window.lastS = Date.now();
             document.getElementById('status-msg').style.display = "none";
             document.getElementById('prod-info').style.display = "block";
             document.getElementById('disp-name').innerText = item.name;
             document.getElementById('disp-price').innerText = "€ " + item.price.toFixed(2);
-            document.getElementById('product-img').src = item.img || "";
+            
+            const img = document.getElementById('product-img');
+            img.style.display = "none"; // Reset
+            img.onload = () => img.style.display = "block";
+            img.src = item.img;
 
             const row = document.createElement('div');
             row.style.display = "flex"; row.style.justifyContent = "space-between";
@@ -107,12 +128,9 @@
             total += item.price;
             document.getElementById('total-amount').innerText = "€ " + total.toFixed(2);
             
-            let s = new SpeechSynthesisUtterance(item.name); s.lang = 'nl-BE'; window.speechSynthesis.speak(s);
+            speak(item.name);
         }
     });
-
-    // Starten
-    loadCentralInventory();
 </script>
 </body>
 </html>
