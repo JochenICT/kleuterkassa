@@ -1,42 +1,231 @@
-// Vervang het stukje Quagga.init door dit voor betere iPad ondersteuning:
-function startScanner() {
-    Quagga.init({
-        inputStream: {
-            name: "Live",
-            type: "LiveStream",
-            target: document.querySelector('#interactive'),
-            constraints: {
-                // Belangrijk voor iPad: expliciet om de camera achterop vragen
-                facingMode: "environment",
-                width: { min: 640 },
-                height: { min: 480 }
-            },
-            // Zorgt dat de video niet bevriest op iOS
-            async: true
-        },
-        decoder: {
-            readers: ["code_128_reader", "ean_reader", "ean_8_reader"]
-        }
-    }, function(err) {
-        if (err) {
-            console.log(err);
-            // Als dit verschijnt op de iPad, zit je niet op een HTTPS verbinding
-            document.getElementById('status-msg').innerHTML = "⚠️ Camera geblokkeerd door Safari (Gebruik HTTPS)";
-            return;
-        }
-        Quagga.start();
-    });
-}
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kleuter Kassa Deluxe - De Klimmuur</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    
+    <style>
+        :root { --primary: #0277bd; --accent: #d81b60; --ticket-bg: #fff; }
+        body { font-family: 'Comic Sans MS', sans-serif; background-color: #e0f7fa; margin: 0; padding: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        
+        header { background: var(--primary); color: white; padding: 10px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin: 0; font-size: 1.8rem; }
 
-// Vervang unlockAdmin door dit (sommige iPads blokkeren prompt() in een loop)
-function unlockAdmin() {
-    setTimeout(() => {
-        let pw = prompt("Wachtwoord leerkracht:");
-        if (pw === MASTER_CODE) {
-            document.getElementById('admin-overlay').style.display = 'block';
-            renderAdmin();
-        } else if (pw) {
-            alert("Fout wachtwoord!");
+        .main-grid { display: grid; grid-template-columns: 1fr 380px; flex-grow: 1; gap: 15px; padding: 15px; box-sizing: border-box; height: calc(100vh - 60px); }
+
+        .scan-side { display: flex; flex-direction: column; gap: 15px; }
+        
+        /* Camera Kader */
+        #interactive.viewport { 
+            width: 100%; height: 220px; border: 8px solid #ffb74d; border-radius: 25px; 
+            overflow: hidden; background: #000; position: relative;
         }
-    }, 100);
-}
+        #interactive.viewport canvas, video { width: 100%; height: 100%; position: absolute; top: 0; left: 0; object-fit: cover; }
+
+        /* Groot Product Scherm */
+        #display { 
+            flex-grow: 1; background: white; border-radius: 30px; border: 8px solid #a5d6a7;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; padding: 20px;
+        }
+        #product-img { max-height: 220px; width: auto; border-radius: 20px; margin: 10px 0; }
+        .name-large { font-size: 2.8rem; color: var(--primary); font-weight: bold; }
+        .price-large { font-size: 4.5rem; color: var(--accent); font-weight: bold; background: #fce4ec; padding: 10px 30px; border-radius: 20px; }
+
+        /* Kassaticket */
+        .receipt-side { 
+            background: var(--ticket-bg); border-radius: 25px; box-shadow: -5px 5px 15px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column; padding: 25px; border: 2px solid #ddd;
+        }
+        #receipt-items { flex-grow: 1; overflow-y: auto; margin: 15px 0; font-family: monospace; font-size: 1.4rem; }
+        .receipt-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #eee; }
+        .receipt-total { border-top: 4px double #333; padding-top: 15px; font-size: 2.4rem; font-weight: bold; display: flex; justify-content: space-between; }
+        
+        .btn-pay { 
+            background: #4caf50; color: white; border: none; padding: 25px; border-radius: 20px; 
+            font-size: 2.2rem; font-weight: bold; cursor: pointer; box-shadow: 0 6px 0 #2e7d32;
+        }
+        .btn-pay:active { transform: translateY(3px); box-shadow: 0 3px 0 #2e7d32; }
+
+        /* Beheer Knop & Overlay */
+        #admin-lock { 
+            position: fixed; bottom: 20px; left: 20px; width: 55px; height: 55px;
+            background: #ffb74d; border-radius: 15px; display: flex; align-items: center;
+            justify-content: center; cursor: pointer; font-size: 26px; z-index: 999;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2); border: 2px solid white;
+        }
+        #admin-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: white; z-index: 1000; padding: 30px; box-sizing: border-box; overflow-y: auto;
+        }
+        .admin-form input { padding: 12px; margin: 5px; width: 220px; border-radius: 10px; border: 1px solid #ccc; font-size: 1rem; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>🛒 De Klimmuur Winkelkassa</h1>
+</header>
+
+<div class="main-grid">
+    <div class="scan-side">
+        <div id="interactive" class="viewport"></div>
+        <div id="display">
+            <h2 id="status-msg">Leg iets onder de camera!</h2>
+            <div id="prod-info" style="display:none;">
+                <div class="name-large" id="disp-name">PRODUCT</div>
+                <img id="product-img" src="" alt="">
+                <div class="price-large" id="disp-price">€ 0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="receipt-side">
+        <div style="text-align:center; border-bottom: 2px solid #333;"><h3>KASSATICKET</h3></div>
+        <div id="receipt-items"></div>
+        <div class="receipt-total">
+            <span>TOTAAL:</span><span id="total-amount">€ 0.00</span>
+        </div>
+        <button class="btn-pay" onclick="clearReceipt()">✅ KLAAR</button>
+    </div>
+</div>
+
+<div id="admin-lock" onclick="unlockAdmin()">🔒</div>
+
+<div id="admin-overlay">
+    <button onclick="lockAdmin()" style="padding:15px; float:right; background:#eee; border-radius:10px;">✖ Sluiten</button>
+    <h2>Leerkracht Beheer</h2>
+    <div style="background:#f4f4f4; padding:25px; border-radius:20px; margin-bottom:20px;">
+        <input type="text" id="in-code" placeholder="Barcode Nummer">
+        <input type="text" id="in-name" placeholder="Naam Product">
+        <input type="number" id="in-price" step="0.01" placeholder="Prijs (bv. 1.50)">
+        <input type="text" id="in-url" placeholder="Link naar foto">
+        <button onclick="addProduct()" style="background:var(--primary); color:white; padding:12px 25px; border:none; border-radius:10px; cursor:pointer;">➕ Voeg toe</button>
+    </div>
+    <table border="0" width="100%" style="text-align:left; border-collapse:collapse;">
+        <thead style="background:#eee;"><tr><th style="padding:10px;">Code</th><th>Naam</th><th>Prijs</th><th>Actie</th></tr></thead>
+        <tbody id="admin-list"></tbody>
+    </table>
+</div>
+
+<script>
+    let inventory = JSON.parse(localStorage.getItem('kassaV7')) || {};
+    let total = 0;
+    const MASTER_CODE = "deklimmuur3665";
+
+    // --- CAMERA STARTEN ---
+    function startScanner() {
+        Quagga.init({
+            inputStream: { 
+                name: "Live", 
+                type: "LiveStream", 
+                target: document.querySelector('#interactive'), 
+                constraints: { 
+                    facingMode: "environment",
+                    width: { min: 640 },
+                    height: { min: 480 }
+                },
+                async: true
+            },
+            decoder: { readers: ["code_128_reader", "ean_reader", "ean_8_reader"] },
+            locate: true
+        }, function(err) {
+            if (err) { 
+                document.getElementById('status-msg').innerHTML = "⚠️ Camera geblokkeerd. Gebruik HTTPS!";
+                return; 
+            }
+            Quagga.start();
+        });
+    }
+
+    // --- BEHEER FUNCTIES ---
+    function unlockAdmin() {
+        setTimeout(() => {
+            let pw = prompt("Geef de code van de school in:");
+            if (pw === MASTER_CODE) {
+                document.getElementById('admin-overlay').style.display = 'block';
+                renderAdmin();
+            } else if(pw) { alert("Fout wachtwoord!"); }
+        }, 100);
+    }
+    
+    function lockAdmin() { document.getElementById('admin-overlay').style.display = 'none'; }
+
+    function addProduct() {
+        const c = document.getElementById('in-code').value;
+        const n = document.getElementById('in-name').value;
+        const p = document.getElementById('in-price').value;
+        const u = document.getElementById('in-url').value;
+        if(c && n && p) {
+            inventory[c] = { name: n, price: parseFloat(p), img: u || 'https://via.placeholder.com/150' };
+            localStorage.setItem('kassaV7', JSON.stringify(inventory));
+            renderAdmin();
+            document.querySelectorAll('.admin-form input').forEach(i => i.value = "");
+        }
+    }
+
+    function renderAdmin() {
+        const b = document.getElementById('admin-list');
+        b.innerHTML = "";
+        for (let k in inventory) {
+            b.innerHTML += `<tr style="border-bottom:1px solid #eee;"><td style="padding:10px;">${k}</td><td>${inventory[k].name}</td><td>€${inventory[k].price.toFixed(2)}</td><td><button onclick="printBarcode('${k}','${inventory[k].name}')">🖨️</button> <button onclick="deleteProd('${k}')">🗑️</button></td></tr>`;
+        }
+    }
+
+    function deleteProd(k) { if(confirm("Wissen?")) { delete inventory[k]; localStorage.setItem('kassaV7', JSON.stringify(inventory)); renderAdmin(); } }
+
+    function printBarcode(c, n) {
+        const w = window.open();
+        w.document.write(`<html><body style="text-align:center;padding:50px;"><h1>${n}</h1><svg id="s"></svg><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script><script>JsBarcode("#s","${c}",{format:"CODE128",width:2,height:100,displayValue:true});window.print();<\/script></body></html>`);
+        w.document.close();
+    }
+
+    // --- KASSA FUNCTIES ---
+    function clearReceipt() {
+        document.getElementById('receipt-items').innerHTML = "";
+        total = 0;
+        document.getElementById('total-amount').innerText = "€ 0.00";
+        document.getElementById('prod-info').style.display = "none";
+        document.getElementById('status-msg').style.display = "block";
+        const s = new SpeechSynthesisUtterance("Dat is betaald. Dank u wel!");
+        s.lang = 'nl-BE';
+        window.speechSynthesis.speak(s);
+    }
+
+    let lastScan = 0;
+    Quagga.onDetected((data) => {
+        let now = Date.now();
+        if (now - lastScan < 3000) return; 
+        
+        const code = data.codeResult.code;
+        const item = inventory[code];
+        
+        if (item) {
+            lastScan = now;
+            document.getElementById('status-msg').style.display = "none";
+            document.getElementById('prod-info').style.display = "block";
+            document.getElementById('disp-name').innerText = item.name;
+            document.getElementById('disp-price').innerText = "€ " + item.price.toFixed(2);
+            document.getElementById('product-img').src = item.img;
+
+            const row = document.createElement('div');
+            row.className = 'receipt-item';
+            row.innerHTML = `<span>${item.name}</span><span>€ ${item.price.toFixed(2)}</span>`;
+            document.getElementById('receipt-items').appendChild(row);
+            
+            total += item.price;
+            document.getElementById('total-amount').innerText = "€ " + total.toFixed(2);
+            
+            let speak = new SpeechSynthesisUtterance(item.name);
+            speak.lang = 'nl-BE';
+            window.speechSynthesis.speak(speak);
+        }
+    });
+
+    window.onload = startScanner;
+</script>
+</body>
+</html>
